@@ -1,13 +1,14 @@
-import platform
-from tkinter import messagebox, filedialog, ttk
-import tkinter as tk
-import typer
-from typing import Optional
-from loguru import logger
 import glob
+import platform
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from typing import Optional
+
+import typer
+from loguru import logger
 
 from linux import run_for_linux
-from windows import get_optical_drives, run_for_windows
+from windows import get_optical_drives, run_for_windows, run_isoburn_step
 
 app = typer.Typer()
 
@@ -75,7 +76,7 @@ def run_with_gui():
             video_file_path.set(path)
 
     root = tk.Tk()
-    root.title("Simplified DVD GUI")
+    root.title("Simplified DVD Creator")
     root.geometry("850x300")
     root.resizable(False, False)
     root.configure(bg="#f4f4f4")
@@ -150,13 +151,17 @@ def run_with_gui():
         dvd_xml_path = "dvd.xml"  # Always use the correct XML path
         try:
             if platform.system() == "Windows":
-                run_for_windows(
+                # Run all steps except isoburn, keep GUI open
+                burn_info = run_for_windows(
                     burn=selected_options['burn'],
                     iso=dvd_xml_path,
                     burn_drive=selected_options['burn_drive'],
                     iso_output=selected_options['iso_output'],
-                    file_path=selected_options['file_path']
+                    file_path=selected_options['file_path'],
+                    skip_burn=True
                 )
+                # Save for after GUI closes
+                selected_options['__burn_info'] = burn_info
             elif platform.system() == "Linux":
                 run_for_linux(
                     burn=selected_options['burn'],
@@ -182,6 +187,7 @@ def run_with_gui():
     # Populate DVD drives (Linux example: /dev/sr*, /dev/cdrom, /dev/dvd)
     if platform.system() == "Windows":
         drives = get_optical_drives()
+        burn_drive_combo['values'] = [d['drive'] for d in drives] if drives else ["No DVD drives found"]
     elif platform.system() == "Linux":
         drives = glob.glob("/dev/sr*") + glob.glob("/dev/cdrom*") + glob.glob("/dev/dvd*")
         if not drives:
@@ -190,8 +196,26 @@ def run_with_gui():
     else:
         drives = ["No DVD drives found, invalid platform"]
         
+    # Add a note for Windows users about the burn process
+    if platform.system() == "Windows":
+        note_label = ttk.Label(
+            root,
+            text="Note: On Windows, the window may show as 'Not Responding' while burning the disc, and will not close until the isoburn window is closed.",
+            font=("Segoe UI", 10, "italic"),
+            background="#f4f4f4",
+            foreground="#a06000",
+            wraplength=700,
+            justify="left"
+        )
+        note_label.grid(row=5, column=0, columnspan=3, padx=18, pady=(0, 10), sticky="w")
 
     root.mainloop()
+
+    # After GUI closes, if on Windows and burn is requested, run isoburn step
+    if platform.system() == "Windows" and selected_options.get('burn') and selected_options.get('__burn_info'):
+        burn_info = selected_options['__burn_info']
+        run_isoburn_step(burn_info['iso_output'], burn_info['burn_drive'])
+
     return selected_options
 
 def run_with_cli(burn: bool, iso: bool, preview: bool, file_path: str, iso_output: Optional[str]):
